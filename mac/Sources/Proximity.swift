@@ -51,6 +51,7 @@ final class Proximity: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
 
     static let service = CBUUID(string: "6b1f3a52-9d2e-4c47-8a51-50756e746531")
     static let command = CBUUID(string: "6b1f3a52-9d2e-4c47-8a51-50756e746532")
+    static let tunnel = CBUUID(string: "6b1f3a52-9d2e-4c47-8a51-50756e746533")
     private static let window: TimeInterval = 900
     private static let lockDelay: TimeInterval = 10
 
@@ -69,6 +70,10 @@ final class Proximity: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private var timer: Timer?
     private(set) var phone: CBPeripheral?
     private var pending: (cmd: UInt8, done: (Bool) -> Void)?
+    /// Pedidos de canal L2CAP en espera, y los canales abiertos (hay que retenerlos o se cierran).
+    private var channelWaiters: [(CBL2CAPChannel?) -> Void] = []
+    private var channels: [CBL2CAPChannel] = []
+    private var psm: CBL2CAPPSM?
     private(set) var status = Status()
 
     func start() {
@@ -179,14 +184,22 @@ final class Proximity: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) { p.discoverServices([Self.service]) }
 
-    func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) { finish(false) }
+    func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
+        finish(false); failChannels()
+    }
+
+    func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        channels.removeAll(); psm = nil; failChannels()
+    }
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let s = p.services?.first(where: { $0.uuid == Self.service }) else { finish(false); return }
-        p.discoverCharacteristics([Self.command], for: s)
+        guard let s = p.services?.first(where: { $0.uuid == Self.service }) else { finish(false); failChannels(); return }
+        p.discoverCharacteristics([Self.command, Self.tunnel], for: s)
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
+        proceedChannels(p)
+        guard pending != nil else { return }
         guard let ch = s.characteristics?.first(where: { $0.uuid == Self.command }), let cmd = pending?.cmd else {
             finish(false); return }
         let ts = Int64(Date().timeIntervalSince1970)
@@ -207,8 +220,70 @@ final class Proximity: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private func finish(_ ok: Bool) {
         guard let pend = pending else { return }
         pending = nil
-        if let p = phone { central.cancelPeripheralConnection(p) }
+        releaseIfIdle()
         pend.done(ok)
+    }
+
+    /// Sin comandos ni canales en uso: soltar la conexión Bluetooth.
+    private func releaseIfIdle() {
+        guard pending == nil, channelWaiters.isEmpty, channels.isEmpty, let p = phone else { return }
+        central.cancelPeripheralConnection(p)
+    }
+
+    // MARK: Canal L2CAP (el enlace cifrado por Bluetooth, cuando la red no llega al celular)
+
+    /// Abre un canal L2CAP con el celular. Se llama en el hilo principal.
+    func openChannel(_ done: @escaping (CBL2CAPChannel?) -> Void) {
+        guard let p = phone, central.state == .poweredOn, status.seen else { done(nil); return }
+        channelWaiters.append(done)
+        p.delegate = self
+        if p.state == .connected, p.services?.first(where: { $0.uuid == Self.service })?.characteristics != nil {
+            proceedChannels(p)
+        } else if p.state != .connecting && p.state != .connected {
+            central.connect(p)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in self?.failChannels() }
+    }
+
+    /// El celular cerró el canal: dejar de retenerlo.
+    func channelClosed(_ ch: CBL2CAPChannel) {
+        channels.removeAll { $0 === ch }
+        releaseIfIdle()
+    }
+
+    private func proceedChannels(_ p: CBPeripheral) {
+        guard !channelWaiters.isEmpty else { return }
+        if let psm { p.openL2CAPChannel(psm); return }
+        guard let ch = p.services?.first(where: { $0.uuid == Self.service })?.characteristics?.first(where: { $0.uuid == Self.tunnel }) else {
+            failChannels(); return }
+        p.readValue(for: ch)
+    }
+
+    func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
+        guard ch.uuid == Self.tunnel else { return }
+        guard error == nil, let v = ch.value, v.count == 2 else {
+            Log.info("bluetooth: el celular no ofrece el canal (\(error?.localizedDescription ?? "sin valor"))")
+            failChannels(); return }
+        psm = CBL2CAPPSM(v[v.startIndex]) << 8 | CBL2CAPPSM(v[v.startIndex + 1])
+        p.openL2CAPChannel(psm!)
+    }
+
+    func peripheral(_ p: CBPeripheral, didOpen ch: CBL2CAPChannel?, error: Error?) {
+        guard !channelWaiters.isEmpty else { return }
+        let done = channelWaiters.removeFirst()
+        if let ch, error == nil { channels.append(ch); done(ch) }
+        else {
+            Log.info("bluetooth: no se abrió el canal (\(error?.localizedDescription ?? "?"))")
+            psm = nil // quizás el celular reinició el servidor con otro PSM
+            done(nil)
+        }
+        releaseIfIdle()
+    }
+
+    private func failChannels() {
+        let w = channelWaiters; channelWaiters.removeAll()
+        w.forEach { $0(nil) }
+        releaseIfIdle()
     }
 }
 

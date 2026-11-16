@@ -20,11 +20,16 @@ final class PhoneLink {
     private var stdin: FileHandle?
     private(set) var device: Adb.Device?
     /// Enlace cifrado propio (sin adb): por el hotspot del celular o por el Wi‑Fi de casa
-    enum NetKind { case hotspot, home }
+    enum NetKind { case hotspot, home, bluetooth }
     private var net: NetChannel?
     private(set) var viaNet = false
     private(set) var netKind: NetKind?
     private(set) var netHost: String?
+    private(set) var netPort: UInt16 = NetChannel.port
+    /// Túnel por Bluetooth (puerto local) para cuando la red no llega al celular, p. ej. con el kill switch de un VPN.
+    var bluetoothPort: (() -> UInt16?)?
+    /// Orden: Bluetooth → Wi‑Fi → cable (útil con el kill switch de un VPN). Si no: Wi‑Fi → cable → Bluetooth.
+    var preferBluetooth = true
     /// Pide al celular por Bluetooth que encienda la depuración inalámbrica (tras reiniciarse no hay residente)
     var askAdbOverBluetooth: (() -> Bool)?
     private var lastBluetoothAsk = Date.distantPast
@@ -69,10 +74,14 @@ final class PhoneLink {
     private func loop() {
         while !stopped {
             if paused { Thread.sleep(forTimeInterval: 1); continue }
-            if let (ch, host, kind) = connectNet() {
+            if preferBluetooth, let (ch, port) = connectBluetooth() {
+                runNet(ch, host: "127.0.0.1", kind: .bluetooth, port: port)
+            } else if let (ch, host, kind) = connectNet() {
                 runNet(ch, host: host, kind: kind) // lo normal: sin adb
             } else if let dev = findDevice() {
                 runHelper(on: dev) // cable, o depuración inalámbrica pedida (p. ej. tras reiniciar el celular)
+            } else if !preferBluetooth, let (ch, port) = connectBluetooth() {
+                runNet(ch, host: "127.0.0.1", kind: .bluetooth, port: port) // la red no llega al celular
             } else {
                 DispatchQueue.main.async { self.onState?(.searching) }
                 askForAdbIfUseful()
@@ -99,6 +108,20 @@ final class PhoneLink {
             return (ch, ip, .home)
         }
         return nil
+    }
+
+    /// El mismo enlace cifrado, por un canal Bluetooth (más lento, pero no depende de la red).
+    private func connectBluetooth(probe: Bool = false) -> (NetChannel, UInt16)? {
+        guard let port = bluetoothPort?(),
+              let ch = NetChannel.connect(host: "127.0.0.1", purpose: probe ? "probe" : "puente", port: port, timeout: 15) else { return nil }
+        return (ch, port)
+    }
+
+    /// Con Bluetooth primero: ¿ya responde? (para dejar el Wi‑Fi o el cable y pasarse a él)
+    private func bluetoothAvailable() -> Bool {
+        guard preferBluetooth, let (ch, _) = connectBluetooth(probe: true) else { return false }
+        ch.close()
+        return true
     }
 
     /// Sin enlace propio ni adb: si el Mac está en un Wi‑Fi, pedir por Bluetooth la depuración inalámbrica
@@ -172,7 +195,12 @@ final class PhoneLink {
             if Date().timeIntervalSince(lastSeen) > 40 { p.terminate(); return }
             self.send(["t": "ping"])
             // Pasar al enlace propio apenas responda: no depende de adb y desenchufar no corta nada
-            if let (ch, _, _) = self.connectNet(probe: true) {
+            if self.bluetoothAvailable() {
+                Log.info("Bluetooth disponible: dejando adb")
+                self.send(["t": "adbWifi", "on": false])
+                Thread.sleep(forTimeInterval: 0.3)
+                p.terminate()
+            } else if let (ch, _, _) = self.connectNet(probe: true) {
                 ch.close()
                 Log.info("enlace propio disponible: dejando adb")
                 self.send(["t": "adbWifi", "on": false]) // ya no hace falta (si estaba encendida)
@@ -201,17 +229,36 @@ final class PhoneLink {
     }
 
     /// El mismo ayudante, por el enlace cifrado propio (hotspot o Wi‑Fi de casa).
-    private func runNet(_ ch: NetChannel, host: String, kind: NetKind) {
+    private func runNet(_ ch: NetChannel, host: String, kind: NetKind, port: UInt16 = NetChannel.port) {
         guard !paused else { ch.close(); return }
-        Log.info(kind == .hotspot ? "enlace por hotspot" : "enlace por Wi‑Fi (\(host))")
+        Log.info(kind == .hotspot ? "enlace por hotspot" : kind == .bluetooth ? "enlace por Bluetooth" : "enlace por Wi‑Fi (\(host))")
         netKind = kind
         netHost = host
+        netPort = port
         net = ch
         viaNet = true
         buffer.removeAll()
         let beat = DispatchSource.makeTimerSource(queue: DispatchQueue.global())
         beat.schedule(deadline: .now() + 15, repeating: 15)
-        beat.setEventHandler { [weak self] in self?.send(["t": "ping"]) }
+        var beats = 0
+        beat.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.send(["t": "ping"])
+            beats += 1
+            guard beats % 4 == 0 else { return } // cada ~minuto
+            if kind != .bluetooth {
+                // Bluetooth primero: pasarse a él apenas responda
+                if self.bluetoothAvailable() { Log.info("Bluetooth disponible: dejando el Wi‑Fi"); ch.close() }
+                return
+            }
+            // Por Bluetooth sin preferirlo: pasar a la red o al cable apenas se pueda
+            guard !self.preferBluetooth else { return }
+            if let (probe, _, _) = self.connectNet(probe: true) {
+                probe.close(); Log.info("la red volvió a llegar al celular: dejando el Bluetooth"); ch.close()
+            } else if Adb.devices().contains(where: { !$0.isWifi && !$0.isLegacyTCP }) {
+                Log.info("cable conectado: dejando el Bluetooth"); ch.close()
+            }
+        }
         beat.resume()
         while let chunk = ch.read() {
             if paused { break }

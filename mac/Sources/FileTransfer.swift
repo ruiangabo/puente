@@ -26,7 +26,7 @@ final class FileTransfer: NSObject, NSWindowDelegate {
             var paths: [String] = []
             var fc: NetChannel?
             if serial == nil {
-                guard let host = link.netHost, let c = NetChannel.connect(host: host, purpose: "files") else {
+                guard let host = link.netHost, let c = NetChannel.connect(host: host, purpose: "files", port: link.netPort) else {
                     status(nil); Toast.show("No se pudo enviar al celular", Self.describe(files)); return }
                 fc = c
             }
@@ -113,7 +113,7 @@ final class FileTransfer: NSObject, NSWindowDelegate {
 
     /// Archivo del celular → destino en el Mac.
     private func netGet(_ path: String, to dest: URL, name: String) -> Bool {
-        guard let host = link.netHost, let ch = NetChannel.connect(host: host, purpose: "files") else { return false }
+        guard let host = link.netHost, let ch = NetChannel.connect(host: host, purpose: "files", port: link.netPort) else { return false }
         defer { ch.close() }
         guard ch.send(json: ["op": "get", "path": path]), let r = ch.readJSON(), r["ok"] as? Bool == true,
               let size = (r["size"] as? NSNumber)?.intValue,

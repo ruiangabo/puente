@@ -25,6 +25,7 @@ final class MenuModel: ObservableObject {
     @Published var dndOn = true
     @Published var dndReady = false
     @Published var autoHotspotOn = true
+    @Published var bluetoothFirst = true
     @Published var micDndOn = true
     @Published var micApp: String? = nil
     @Published var micIgnored: [String] = []
@@ -47,6 +48,7 @@ final class MenuModel: ObservableObject {
     var onDndToggle: ((Bool) -> Void)?
     var onInstallShortcuts: (() -> Void)?
     var onAutoHotspotToggle: ((Bool) -> Void)?
+    var onBluetoothFirstToggle: ((Bool) -> Void)?
     var onMicDndToggle: ((Bool) -> Void)?
     var onMicIgnoreCurrent: (() -> Void)?
     var onMicIgnoreClear: (() -> Void)?
@@ -366,6 +368,9 @@ struct NearbySection: View {
             ToggleRow(icon: "wifi.exclamationmark", title: "Hotspot automático",
                       subtitle: m.hotspotReady ? "Si el Mac se queda sin Wi‑Fi" : "Se activa tras la primera conexión",
                       isOn: Binding(get: { m.autoHotspotOn }, set: { m.autoHotspotOn = $0; m.onAutoHotspotToggle?($0) }))
+            ToggleRow(icon: "dot.radiowaves.left.and.right", title: "Bluetooth primero",
+                      subtitle: m.bluetoothFirst ? "Bluetooth, luego Wi‑Fi y cable (sirve con VPN)" : "Wi‑Fi, luego cable y Bluetooth",
+                      isOn: Binding(get: { m.bluetoothFirst }, set: { m.bluetoothFirst = $0; m.onBluetoothFirstToggle?($0) }))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)

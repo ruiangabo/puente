@@ -74,9 +74,10 @@ final class NetLink {
         t.start();
     }
 
-    /** Solo red local, y solo por el hotspot (encendido) o por el Wi‑Fi de casa. */
+    /** Solo red local, y solo por el hotspot (encendido) o por el Wi‑Fi de casa; o el túnel Bluetooth de la app (127.0.0.1). */
     private static boolean allowed(Socket s) {
         try {
+            if (s.getInetAddress().isLoopbackAddress()) return true; // túnel L2CAP: igual hay que tener la llave
             if (!s.getInetAddress().isSiteLocalAddress()) return false;
             NetworkInterface ni = NetworkInterface.getByInetAddress(s.getLocalAddress());
             String n = ni == null ? "" : ni.getName();

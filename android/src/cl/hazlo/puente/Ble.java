@@ -48,6 +48,8 @@ import javax.crypto.spec.SecretKeySpec;
 final class Ble {
     static final UUID SERVICE = UUID.fromString("6b1f3a52-9d2e-4c47-8a51-50756e746531");
     static final UUID COMMAND = UUID.fromString("6b1f3a52-9d2e-4c47-8a51-50756e746532");
+    /** Puerto (PSM) del canal L2CAP: el mismo enlace cifrado que por Wi‑Fi, pero por Bluetooth. */
+    static final UUID TUNNEL = UUID.fromString("6b1f3a52-9d2e-4c47-8a51-50756e746533");
     static final int MANUFACTURER = 0xFFFF;
     static final long WINDOW_S = 900;
 
@@ -60,6 +62,7 @@ final class Ble {
     private long lastCmdTs;
     private final java.util.Map<String, byte[]> prepared = new java.util.HashMap<>();
     private boolean receiverOn;
+    private android.bluetooth.BluetoothServerSocket l2cap;
 
     Ble(Context ctx, Consumer<JSONObject> report) { this.ctx = ctx; this.report = report; }
 
@@ -77,6 +80,7 @@ final class Ble {
         if (a == null || !a.isEnabled()) { state(false); return; }
         try {
             startGatt();
+            startTunnel(a);
             startAdvertising(a);
             scheduleRotation();
         } catch (SecurityException e) {
@@ -88,8 +92,9 @@ final class Ble {
         try {
             if (set != null && advertiser != null) advertiser.stopAdvertisingSet(advCallback);
             if (gatt != null) gatt.close();
-        } catch (SecurityException ignored) {}
-        set = null; gatt = null; advertiser = null;
+            if (l2cap != null) l2cap.close();
+        } catch (Exception ignored) {}
+        set = null; gatt = null; advertiser = null; l2cap = null;
     }
 
     // ---------- anuncio ----------
@@ -163,10 +168,21 @@ final class Ble {
         BluetoothGattService svc = new BluetoothGattService(SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY);
         svc.addCharacteristic(new BluetoothGattCharacteristic(COMMAND,
                 BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE));
+        svc.addCharacteristic(new BluetoothGattCharacteristic(TUNNEL,
+                BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ));
         gatt.addService(svc);
     }
 
     private final BluetoothGattServerCallback gattCallback = new BluetoothGattServerCallback() {
+        @Override
+        public void onCharacteristicReadRequest(BluetoothDevice d, int req, int offset, BluetoothGattCharacteristic ch) {
+            android.bluetooth.BluetoothServerSocket s = l2cap;
+            if (!TUNNEL.equals(ch.getUuid()) || s == null) { respond(d, req, BluetoothGatt.GATT_READ_NOT_PERMITTED, offset, null); return; }
+            int psm = s.getPsm();
+            byte[] v = new byte[] { (byte) (psm >> 8), (byte) psm };
+            respond(d, req, BluetoothGatt.GATT_SUCCESS, offset, offset >= v.length ? new byte[0] : Arrays.copyOfRange(v, offset, v.length));
+        }
+
         @Override
         public void onCharacteristicWriteRequest(BluetoothDevice d, int req, BluetoothGattCharacteristic ch,
                                                  boolean preparedWrite, boolean needResponse, int offset, byte[] value) {
@@ -214,6 +230,59 @@ final class Ble {
     }
 
     private JSONObject daemon(String cmd) { return DaemonClient.ask(ctx, cmd); }
+
+    // ---------- túnel L2CAP ----------
+
+    /**
+     * Para cuando el Mac no puede llegar al celular por la red (p. ej. un VPN con "kill switch" bloquea la red local):
+     * cada canal L2CAP se reenvía tal cual al enlace del residente (127.0.0.1:47930). El cifrado va de punta a punta
+     * con la llave compartida, así que el canal no necesita emparejamiento.
+     */
+    private void startTunnel(BluetoothAdapter a) {
+        if (l2cap != null) return;
+        try { l2cap = a.listenUsingInsecureL2capChannel(); }
+        catch (Exception e) { l2cap = null; return; }
+        final android.bluetooth.BluetoothServerSocket server = l2cap;
+        Thread t = new Thread(() -> {
+            while (true) {
+                android.bluetooth.BluetoothSocket bt;
+                try { bt = server.accept(); } catch (Exception e) { return; } // cerrado (Bluetooth apagado)
+                new Thread(() -> bridge(bt), "l2cap-client").start();
+            }
+        }, "l2cap");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static void bridge(android.bluetooth.BluetoothSocket bt) {
+        Socket tcp = null;
+        try {
+            tcp = new Socket(InetAddress.getByName("127.0.0.1"), 47930);
+            tcp.setTcpNoDelay(true);
+            final Socket t = tcp;
+            Thread up = new Thread(() -> pipe(bt, t, true), "l2cap-up");
+            up.start();
+            pipe(bt, t, false);
+            up.join();
+        } catch (Exception ignored) {
+        } finally {
+            try { bt.close(); } catch (Exception ignored) {}
+            try { if (tcp != null) tcp.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    /** Copia en una dirección; al terminar cierra ambos lados para que la otra dirección también termine. */
+    private static void pipe(android.bluetooth.BluetoothSocket bt, Socket tcp, boolean fromBt) {
+        byte[] buf = new byte[16384];
+        try {
+            java.io.InputStream in = fromBt ? bt.getInputStream() : tcp.getInputStream();
+            OutputStream out = fromBt ? tcp.getOutputStream() : bt.getOutputStream();
+            int n;
+            while ((n = in.read(buf)) > 0) { out.write(buf, 0, n); out.flush(); }
+        } catch (Exception ignored) {}
+        try { bt.close(); } catch (Exception ignored) {}
+        try { tcp.close(); } catch (Exception ignored) {}
+    }
 
     // ---------- utilidades ----------
 

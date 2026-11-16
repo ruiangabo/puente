@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var notifications = PhoneNotifications(link: link)
     private let proximity = Proximity()
     private lazy var hotspot = Hotspot(proximity: proximity)
+    private lazy var tunnel = BluetoothTunnel(proximity: proximity)
     private let defaults = UserDefaults.standard
     private let mirror = Mirror()
     private let focus = FocusSync()
@@ -211,6 +212,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nowPlaying.start()
 
         refreshButton()
+        link.bluetoothPort = { [weak self] in self?.tunnel.localPort() }
+        model.bluetoothFirst = defaults.object(forKey: "bluetoothFirst") as? Bool ?? true
+        link.preferBluetooth = model.bluetoothFirst
+        model.onBluetoothFirstToggle = { [weak self] on in
+            self?.defaults.set(on, forKey: "bluetoothFirst"); self?.link.preferBluetooth = on
+        }
         link.start()
     }
 
