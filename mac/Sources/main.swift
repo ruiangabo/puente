@@ -32,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var micSetDnd = UserDefaults.standard.bool(forKey: "micSetDnd") {
         didSet { UserDefaults.standard.set(micSetDnd, forKey: "micSetDnd") }
     }
+    /// La concentración del Mac la puso Puente porque el celular entró en No molestar (p. ej. modo dormir).
+    /// Se guarda: si en la noche se corta la conexión, al reconectar en la mañana se sabe que hay que quitarla.
+    private var macFocusFromPhone = UserDefaults.standard.bool(forKey: "macFocusFromPhone") {
+        didSet { UserDefaults.standard.set(macFocusFromPhone, forKey: "macFocusFromPhone") }
+    }
 
     func applicationWillFinishLaunching(_ n: Notification) {
         // Enlaces tel: y sms: (Chrome, Opera, correos) → el celular
@@ -274,7 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notifications.onOpenSms = { [weak self] from in self?.openCompose(to: from) }
 
         focus.onMacChange = { [weak self] on in
-            guard let self, self.model.dndOn, self.link.isConnected, self.phoneDnd != on else { return }
+            guard let self else { return }
+            self.macFocusFromPhone = false // la cambiaste tú en el Mac
+            guard self.model.dndOn, self.link.isConnected, self.phoneDnd != on else { return }
             Log.info("concentración del Mac: \(on) → celular")
             self.phoneDnd = on
             self.link.send(["t": "dnd", "on": on])
@@ -382,9 +389,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let first = phoneDnd == nil
         let changed = phoneDnd != on
         phoneDnd = on
-        // Al conectar solo se anota el estado; se sincroniza cuando cambia
-        guard !first, changed, model.dndOn, model.dndReady, focus.macOn != on else { return }
+        guard model.dndOn, model.dndReady else { return }
+        if first {
+            // Al conectar solo se anota el estado, salvo que el celular haya salido de No molestar
+            // mientras no había conexión (el modo dormir terminó en la mañana con el Mac dormido)
+            guard !on, macFocusFromPhone, focus.macOn == true else { return }
+            Log.info("el celular ya no está en No molestar: se quita también en el Mac")
+            macFocusFromPhone = false
+            focus.setMac(false)
+            return
+        }
+        guard changed, focus.macOn != on else { return }
         Log.info("no molestar del celular: \(on) → Mac")
+        macFocusFromPhone = on
         focus.setMac(on)
     }
 
