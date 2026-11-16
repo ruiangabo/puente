@@ -125,12 +125,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch s {
             case .searching:
                 self.model.connected = false; self.model.battery = nil; self.model.ringing = false
-                self.messages.model.connected = false; self.model.viaHotspot = false
+                self.messages.model.connected = false; self.model.viaHotspot = false; self.model.viaBluetooth = false
                 self.phoneDnd = nil
                 self.phoneAtHome = false
             case .connected(let wifi):
                 self.model.connected = true; self.model.wifi = wifi
                 self.model.viaHotspot = self.link.netKind == .hotspot
+                self.model.viaBluetooth = self.link.netKind == .bluetooth
                 self.model.phoneName = self.defaults.string(forKey: "phoneName") ?? "Tu celular"
                 // Celular recién conectado: mandarle lo que suena y el volumen
                 if !self.macAsleep, let np = self.nowPlaying.snapshot { self.link.send(np) }

@@ -6,6 +6,7 @@ final class MenuModel: ObservableObject {
     @Published var connected = false
     @Published var wifi = false
     @Published var viaHotspot = false
+    @Published var viaBluetooth = false
     @Published var phoneName = UserDefaults.standard.string(forKey: "phoneName") ?? "Tu celular"
     @Published var battery: (level: Int, charging: Bool)? = nil
     @Published var activity: ClipActivity? = nil
@@ -63,7 +64,7 @@ struct ActionsSection: View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
                 ActionButton(icon: "iphone.gen3", title: m.mirroring ? "Abierta" : "Pantalla",
-                             active: m.mirroring, enabled: m.connected && !m.viaHotspot) { m.onMirror?() }
+                             active: m.mirroring, enabled: m.connected && !m.viaHotspot && !m.viaBluetooth) { m.onMirror?() }
                 ActionButton(icon: m.ringing ? "speaker.wave.3.fill" : "dot.radiowaves.left.and.right",
                              title: m.ringing ? "Detener" : "Buscar", active: m.ringing, enabled: m.connected) { m.onRing?() }
                 ActionButton(icon: "arrow.up.forward.app", title: "Pestaña",
@@ -134,9 +135,9 @@ struct DeviceCard: View {
                 Text(m.phoneName).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
                 HStack(spacing: 4) {
                     if m.connected {
-                        Image(systemName: m.viaHotspot ? "personalhotspot" : m.wifi ? "wifi" : "cable.connector")
+                        Image(systemName: m.viaBluetooth ? "dot.radiowaves.left.and.right" : m.viaHotspot ? "personalhotspot" : m.wifi ? "wifi" : "cable.connector")
                             .font(.system(size: 9, weight: .semibold))
-                        Text(m.viaHotspot ? "Conectado por el hotspot" : m.wifi ? "Conectado por Wi‑Fi" : "Conectado por cable")
+                        Text(m.viaBluetooth ? "Conectado por Bluetooth" : m.viaHotspot ? "Conectado por el hotspot" : m.wifi ? "Conectado por Wi‑Fi" : "Conectado por cable")
                         if m.wifi { Image(systemName: "lock.fill").font(.system(size: 8)) }
                     } else {
                         ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
