@@ -48,6 +48,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     </dict>
   </array>
   <key>CFBundleIconFile</key><string>Puente</string>
+  <key>CFBundleDocumentTypes</key><array><dict>
+    <key>CFBundleTypeName</key><string>Archivo para el celular</string>
+    <key>CFBundleTypeRole</key><string>Viewer</string>
+    <key>LSHandlerRank</key><string>None</string>
+    <key>LSItemContentTypes</key><array><string>public.item</string></array>
+  </dict></array>
   <key>NSBluetoothAlwaysUsageDescription</key><string>Puente usa Bluetooth para saber si tu celular está cerca y para encender su hotspot.</string>
   <key>NSAppleEventsUsageDescription</key><string>Puente lee la pestaña que estás viendo para abrirla en tu celular.</string>
   <key>NSFocusStatusUsageDescription</key><string>Puente activa No molestar en tu celular cuando lo activas en el Mac.</string>
@@ -58,7 +64,39 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHumanReadableCopyright</key><string>© 2026 Ángel Ruijano · Licencia MIT</string>
 </dict></plist>
 PLIST
-xattr -cr "$APP"; codesign --force --sign - "$APP/Contents/Resources/nowplaying.dylib"; codesign --force --sign - "$APP"
+# Extensión «Compartir → Puente» (menú Compartir de Finder y otras apps)
+EXT="$APP/Contents/PlugIns/PuenteShare.appex"
+mkdir -p "$EXT/Contents/MacOS" "$EXT/Contents/Resources"
+swiftc -O -swift-version 5 -target arm64-apple-macos14.0 -application-extension -module-name PuenteShare -framework AppKit \
+    -Xlinker -e -Xlinker _NSExtensionMain -o "$EXT/Contents/MacOS/PuenteShare" Share/ShareViewController.swift
+cp "$APP/Contents/Resources/Puente.icns" "$EXT/Contents/Resources/"
+cat > "$EXT/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>cl.hazlo.puente.share</string>
+  <key>CFBundleName</key><string>Puente</string>
+  <key>CFBundleDisplayName</key><string>Puente</string>
+  <key>CFBundleExecutable</key><string>PuenteShare</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleIconFile</key><string>Puente</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSExtension</key><dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.share-services</string>
+    <key>NSExtensionPrincipalClass</key><string>PuenteShare.ShareViewController</string>
+    <key>NSExtensionAttributes</key><dict>
+      <key>NSExtensionActivationRule</key><dict>
+        <key>NSExtensionActivationSupportsFileWithMaxCount</key><integer>100</integer>
+      </dict>
+    </dict>
+  </dict>
+</dict></plist>
+PLIST
+xattr -cr "$APP"; codesign --force --sign - "$APP/Contents/Resources/nowplaying.dylib"
+codesign --force --sign - --entitlements Share/Share.entitlements "$EXT"
+codesign --force --sign - "$APP"
 if [ "${1:-}" = "--no-install" ]; then echo "OK: $APP"; exit 0; fi
 mkdir -p ~/Applications
 osascript -e 'quit app "Puente"' 2>/dev/null || true

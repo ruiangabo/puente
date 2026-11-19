@@ -375,6 +375,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Finder › clic derecho › Servicios › "Enviar al celular"
+    /// Archivos que llegan por «Compartir → Puente» (o «Abrir con» Puente): al celular.
+    func application(_ sender: NSApplication, open urls: [URL]) {
+        files.send(urls.filter(\.isFileURL))
+    }
+
     @objc func sendToPhone(_ pb: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString>?) {
         let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         files.send(urls)
