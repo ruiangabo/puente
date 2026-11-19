@@ -29,7 +29,7 @@ final class PhoneLink {
     /// Túnel por Bluetooth (puerto local) para cuando la red no llega al celular, p. ej. con el kill switch de un VPN.
     var bluetoothPort: (() -> UInt16?)?
     /// Orden: Bluetooth → Wi‑Fi → cable (útil con el kill switch de un VPN). Si no: Wi‑Fi → cable → Bluetooth.
-    var preferBluetooth = true
+    var preferBluetooth = false
     /// Pide al celular por Bluetooth que encienda la depuración inalámbrica (tras reiniciarse no hay residente)
     var askAdbOverBluetooth: (() -> Bool)?
     private var lastBluetoothAsk = Date.distantPast

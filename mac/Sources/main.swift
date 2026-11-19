@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refreshButton()
         link.bluetoothPort = { [weak self] in self?.tunnel.localPort() }
-        model.bluetoothFirst = defaults.object(forKey: "bluetoothFirst") as? Bool ?? true
+        model.bluetoothFirst = defaults.object(forKey: "bluetoothFirst") as? Bool ?? false
         link.preferBluetooth = model.bluetoothFirst
         model.onBluetoothFirstToggle = { [weak self] on in
             self?.defaults.set(on, forKey: "bluetoothFirst"); self?.link.preferBluetooth = on

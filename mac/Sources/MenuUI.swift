@@ -26,7 +26,7 @@ final class MenuModel: ObservableObject {
     @Published var dndOn = true
     @Published var dndReady = false
     @Published var autoHotspotOn = true
-    @Published var bluetoothFirst = true
+    @Published var bluetoothFirst = false
     @Published var micDndOn = true
     @Published var micApp: String? = nil
     @Published var micIgnored: [String] = []
